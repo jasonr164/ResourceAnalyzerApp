@@ -24,7 +24,7 @@ def excel_date(num):
     return pd.Timestamp('1899-12-30') + pd.to_timedelta(num, unit='D')
 
 # -----------------------------
-# Step plot (IMPROVED)
+# Step plot (fixed + improved)
 # -----------------------------
 def square_wave_step_plot(all_tasks, resource, capacity, x_min, x_max):
     df = all_tasks[all_tasks['Resource'] == resource].sort_values('Start date')
@@ -49,7 +49,6 @@ def square_wave_step_plot(all_tasks, resource, capacity, x_min, x_max):
     if not times:
         return go.Figure()
 
-    # Extend range
     if times[0] > x_min:
         times.insert(0, x_min)
         usage.insert(0, 0)
@@ -62,39 +61,47 @@ def square_wave_step_plot(all_tasks, resource, capacity, x_min, x_max):
 
     fig = go.Figure()
 
-    # Main square wave
+    # Base line
     fig.add_trace(go.Scatter(
         x=step_df['time'],
         y=step_df['usage'],
         mode='lines',
-        line=dict(shape='hv', width=3),
+        line=dict(shape='hv', width=3, color='blue'),
         name=f"{resource} Usage"
     ))
 
-    # Conflict shading
-    over = step_df['usage'] > capacity
+    # Conflict highlighting (corrected)
+    mask = step_df['usage'] > capacity
+
     fig.add_trace(go.Scatter(
-        x=step_df['time'],
-        y=np.where(over, step_df['usage'], capacity),
-        fill='tonexty',
+        x=step_df['time'][mask],
+        y=step_df['usage'][mask],
         mode='lines',
-        line=dict(width=0),
-        fillcolor='rgba(255,0,0,0.3)',
-        name="Over Capacity"
+        line=dict(shape='hv', width=4, color='red'),
+        name="Conflict"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=step_df['time'][mask],
+        y=step_df['usage'][mask],
+        mode='markers',
+        marker=dict(color='red', size=8),
+        name="Conflict Points"
     ))
 
     # Capacity line
     fig.add_hline(y=capacity, line_dash="dash", line_color="red")
 
-    # ✅ Whole-number Y axis only
+    # Whole-number axis
     y_max = int(max(step_df['usage'].max(), capacity))
+
     fig.update_layout(
         title=f"{resource} Utilization",
         xaxis=dict(range=[x_min, x_max]),
         yaxis=dict(
             title="Usage",
             tickmode='linear',
-            dtick=1,   # ← forces whole numbers
+            dtick=1,
             range=[0, y_max + 1]
         ),
         height=350
@@ -109,10 +116,13 @@ if "all_tasks" not in st.session_state:
     st.session_state.all_tasks = pd.DataFrame(
         columns=['Title', 'Start date', 'End date', 'Resource']
     )
+
 if "hide_tasks" not in st.session_state:
     st.session_state.hide_tasks = set()
+
 if "resource_caps" not in st.session_state:
     st.session_state.resource_caps = {}
+
 if "hide_step_plots" not in st.session_state:
     st.session_state.hide_step_plots = set()
 
@@ -135,7 +145,6 @@ if uploaded_files:
         df['Resource'] = df['Title']
         fresh_tasks = pd.concat([fresh_tasks, df], ignore_index=True)
 
-    # Date parsing
     for col in ['Start date', 'End date']:
         if np.issubdtype(fresh_tasks[col].dtype, np.number):
             fresh_tasks[col] = fresh_tasks[col].apply(excel_date)
@@ -144,7 +153,6 @@ if uploaded_files:
 
     fresh_tasks = fresh_tasks.dropna(subset=['Start date', 'End date'])
 
-    # ✅ Append instead of overwrite
     st.session_state.all_tasks = pd.concat(
         [st.session_state.all_tasks, fresh_tasks],
         ignore_index=True
@@ -153,53 +161,57 @@ if uploaded_files:
 tasks = st.session_state.all_tasks.copy()
 
 # -----------------------------
-# ✅ Tasks table (compact UI)
+# Tasks Table (fixed UX)
 # -----------------------------
 st.subheader("Tasks Loaded")
 
 if not tasks.empty:
-    display_df = tasks.copy()
 
-    display_df['Hide'] = display_df.index.isin(st.session_state.hide_tasks)
+    if "edit_buffer" not in st.session_state:
+        st.session_state.edit_buffer = tasks.copy()
+        st.session_state.edit_buffer['Hide'] = st.session_state.edit_buffer.index.isin(
+            st.session_state.hide_tasks
+        )
 
     edited_df = st.data_editor(
-        display_df,
+        st.session_state.edit_buffer,
         use_container_width=True,
-        num_rows="dynamic",
-        column_config={
-            "Title": st.column_config.TextColumn(),
-            "Start date": st.column_config.DatetimeColumn(),
-            "End date": st.column_config.DatetimeColumn(),
-            "Resource": st.column_config.SelectboxColumn(
-                options=sorted(tasks['Resource'].unique())
-            ),
-            "Hide": st.column_config.CheckboxColumn()
-        }
+        key="task_editor",
+        height=400
     )
 
-    # Apply edits
-    st.session_state.all_tasks[['Title', 'Start date', 'End date', 'Resource']] = \
-        edited_df[['Title', 'Start date', 'End date', 'Resource']]
+    colA, colB = st.columns(2)
 
-    # Update hidden rows
-    st.session_state.hide_tasks = set(
-        edited_df[edited_df['Hide']].index
-    )
+    with colA:
+        if st.button("✅ Apply Changes"):
+            st.session_state.all_tasks = edited_df.drop(columns=["Hide"])
+            st.session_state.hide_tasks = set(edited_df[edited_df["Hide"]].index)
 
-    display_tasks = edited_df[~edited_df['Hide']]
+            st.session_state.edit_buffer = st.session_state.all_tasks.copy()
+            st.session_state.edit_buffer['Hide'] = st.session_state.edit_buffer.index.isin(
+                st.session_state.hide_tasks
+            )
+
+    with colB:
+        if st.button("↩ Reset Edits"):
+            st.session_state.edit_buffer = tasks.copy()
+            st.session_state.edit_buffer['Hide'] = st.session_state.edit_buffer.index.isin(
+                st.session_state.hide_tasks
+            )
+
+    display_tasks = edited_df[~edited_df["Hide"]]
+
 else:
     display_tasks = tasks
 
 # -----------------------------
-# ✅ Resource Capacity (cleaned)
+# Resource Capacity (compact)
 # -----------------------------
 st.subheader("Resource Capacity Settings")
 
 resource_caps = st.session_state.resource_caps
-
 resources = sorted(display_tasks['Resource'].unique())
 
-# Compact layout
 cols = st.columns(min(3, len(resources)) if resources else 1)
 
 for i, resource in enumerate(resources):
@@ -218,7 +230,7 @@ for i, resource in enumerate(resources):
 final_tasks = display_tasks.copy()
 
 # -----------------------------
-# Analyze button
+# Analyze Button
 # -----------------------------
 if st.button("Analyze"):
     st.session_state.analyzed = True
@@ -228,6 +240,23 @@ if st.session_state.get("analyzed", False):
     st.subheader("Combined Gantt Chart")
 
     if not final_tasks.empty:
+
+        # ✅ B3: chronological resource ordering
+        resource_order = (
+            final_tasks.groupby("Resource")["Start date"]
+            .min()
+            .sort_values()
+            .index.tolist()
+        )
+
+        final_tasks["Resource"] = pd.Categorical(
+            final_tasks["Resource"],
+            categories=resource_order,
+            ordered=True
+        )
+
+        final_tasks = final_tasks.sort_values(by=["Resource", "Start date"])
+
         fig = px.timeline(
             final_tasks,
             x_start="Start date",
@@ -237,7 +266,12 @@ if st.session_state.get("analyzed", False):
             hover_data=["Title"]
         )
 
-        fig.update_yaxes(autorange="reversed")
+        fig.update_yaxes(
+            categoryorder="array",
+            categoryarray=resource_order,
+            autorange="reversed"
+        )
+
         st.plotly_chart(fig, use_container_width=True)
 
         gantt_x0 = final_tasks['Start date'].min()
@@ -271,7 +305,7 @@ if st.session_state.get("analyzed", False):
                 st.plotly_chart(fig_step, use_container_width=True)
 
         # -----------------------------
-        # ✅ Conflict Summary
+        # Conflict Summary (fixed)
         # -----------------------------
         st.subheader("Conflict Summary")
 
@@ -308,4 +342,4 @@ else:
 
 st.markdown("---")
 st.caption("Upload, edit, assign resources, and analyze conflicts.")
-
+``
