@@ -5,6 +5,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # -----------------------------
+# Constants
+# -----------------------------
+REQUIRED_COLS = ["Title", "Start date", "End date", "Resource"]
+
+# -----------------------------
 # Utilities
 # -----------------------------
 def parse_gantt_file(uploaded_file):
@@ -13,12 +18,12 @@ def parse_gantt_file(uploaded_file):
     else:
         df = pd.read_excel(uploaded_file)
 
-    required_cols = ['Title', 'Start date', 'End date']
-    if not all(col in df.columns for col in required_cols):
+    if not all(col in df.columns for col in REQUIRED_COLS[:-1]):
         st.error(f"{uploaded_file.name} missing required columns")
-        return pd.DataFrame(columns=required_cols)
+        return pd.DataFrame(columns=REQUIRED_COLS)
 
-    return df[required_cols]
+    df["Resource"] = df["Title"]
+    return df[REQUIRED_COLS]
 
 def excel_date(num):
     return pd.Timestamp('1899-12-30') + pd.to_timedelta(num, unit='D')
@@ -27,6 +32,9 @@ def excel_date(num):
 # Expand multi-resource tasks
 # -----------------------------
 def expand_resources(df):
+    if df.empty:
+        return pd.DataFrame(columns=REQUIRED_COLS)
+
     rows = []
     for _, r in df.iterrows():
         resources = [x.strip() for x in str(r["Resource"]).split(",")]
@@ -34,33 +42,29 @@ def expand_resources(df):
             new = r.copy()
             new["Resource"] = res
             rows.append(new)
+
     return pd.DataFrame(rows)
 
 # -----------------------------
-# Step plot (with cooldown)
+# Step Plot
 # -----------------------------
 def square_wave_step_plot(all_tasks, resource, capacity, cooldown_weeks, x_min, x_max):
     df = all_tasks[all_tasks["Resource"] == resource]
 
     events = []
-
     for _, r in df.iterrows():
-        start = r["Start date"]
-        end = r["End date"]
+        start, end = r["Start date"], r["End date"]
 
-        # normal usage
         events.append((start, 1))
         events.append((end, -1))
 
-        # cooldown usage
         cooldown_end = end + pd.Timedelta(weeks=cooldown_weeks)
         events.append((end, 0.5))
         events.append((cooldown_end, -0.5))
 
     events.sort()
 
-    times, usage = [], []
-    current = 0
+    times, usage, current = [], [], 0
 
     for t, delta in events:
         times.append(t)
@@ -84,24 +88,20 @@ def square_wave_step_plot(all_tasks, resource, capacity, cooldown_weeks, x_min, 
 
     fig = go.Figure()
 
-    # Base usage
     fig.add_trace(go.Scatter(
         x=step_df["time"],
         y=step_df["usage"],
         mode="lines",
-        line=dict(shape="hv", width=3, color="blue"),
-        name="Usage"
+        line=dict(shape="hv", width=3, color="blue")
     ))
 
-    # Conflict highlighting
     mask = step_df["usage"] > capacity
 
     fig.add_trace(go.Scatter(
         x=step_df["time"][mask],
         y=step_df["usage"][mask],
         mode="lines",
-        line=dict(shape="hv", width=4, color="red"),
-        name="Conflict"
+        line=dict(shape="hv", width=4, color="red")
     ))
 
     fig.add_hline(y=capacity, line_dash="dash", line_color="red")
@@ -109,20 +109,16 @@ def square_wave_step_plot(all_tasks, resource, capacity, cooldown_weeks, x_min, 
     y_max = int(np.ceil(max(step_df["usage"].max(), capacity)))
 
     fig.update_layout(
-        title=f"{resource}",
+        title=resource,
         xaxis=dict(range=[x_min, x_max]),
-        yaxis=dict(
-            tickmode="linear",
-            dtick=1,
-            range=[0, y_max + 1]
-        ),
+        yaxis=dict(dtick=1, range=[0, y_max + 1]),
         height=300
     )
 
     return fig
 
 # -----------------------------
-# Conflict scoring (sorting)
+# Conflict scoring
 # -----------------------------
 def compute_conflict_score(df, capacity):
     events = []
@@ -131,6 +127,7 @@ def compute_conflict_score(df, capacity):
         events.append((r["End date"], -1))
 
     events.sort()
+
     current = 0
     score = 0
 
@@ -145,20 +142,15 @@ def compute_conflict_score(df, capacity):
 # Session State
 # -----------------------------
 if "all_tasks" not in st.session_state:
-    st.session_state.all_tasks = pd.DataFrame(
-        columns=["Title", "Start date", "End date", "Resource"]
-    )
-
-if "hide_tasks" not in st.session_state:
-    st.session_state.hide_tasks = set()
+    st.session_state.all_tasks = pd.DataFrame(columns=REQUIRED_COLS)
 
 if "resource_settings" not in st.session_state:
     st.session_state.resource_settings = {}
 
 # -----------------------------
-# App UI
+# UI
 # -----------------------------
-st.title("Resource Gantt Tool - Version C1")
+st.title("Resource Gantt Tool - Version C2")
 
 uploaded_files = st.file_uploader(
     "Upload files",
@@ -167,11 +159,10 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    new_tasks = pd.DataFrame()
+    new_tasks = pd.DataFrame(columns=REQUIRED_COLS)
 
     for f in uploaded_files:
         df = parse_gantt_file(f)
-        df["Resource"] = df["Title"]
         new_tasks = pd.concat([new_tasks, df])
 
     for col in ["Start date", "End date"]:
@@ -190,7 +181,7 @@ if uploaded_files:
 tasks = st.session_state.all_tasks.copy()
 
 # -----------------------------
-# Tasks Table
+# Task editor (SAFE)
 # -----------------------------
 st.subheader("Tasks Loaded")
 
@@ -207,12 +198,16 @@ if not tasks.empty:
         key="editor"
     )
 
+    # ✅ FORCE REQUIRED COLUMNS BACK
+    for col in REQUIRED_COLS:
+        if col not in edited.columns:
+            edited[col] = ""
+
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("✅ Apply Changes"):
-            st.session_state.all_tasks = edited.drop(columns=["Hide"])
-            st.session_state.hide_tasks = set(edited[edited["Hide"]].index)
+            st.session_state.all_tasks = edited[REQUIRED_COLS]
             st.session_state.edit_buffer = edited.copy()
 
     with col2:
@@ -220,22 +215,25 @@ if not tasks.empty:
             st.session_state.edit_buffer = tasks.copy()
             st.session_state.edit_buffer["Hide"] = False
 
-    display_tasks = edited[~edited["Hide"]]
+    display_tasks = edited
 
 else:
-    display_tasks = tasks
+    display_tasks = pd.DataFrame(columns=REQUIRED_COLS)
 
 # -----------------------------
-# Expand multi-resource
+# Expand resources (SAFE)
 # -----------------------------
 expanded_tasks = expand_resources(display_tasks)
 
 # -----------------------------
-# Resource Settings
+# Resource Settings (SAFE)
 # -----------------------------
 st.subheader("Resource Settings")
 
-resources = sorted(expanded_tasks["Resource"].unique())
+if "Resource" in expanded_tasks.columns:
+    resources = sorted(expanded_tasks["Resource"].dropna().unique())
+else:
+    resources = []
 
 cols = st.columns(3)
 
@@ -248,19 +246,19 @@ for i, r in enumerate(resources):
             "cooldown": 1.0
         }
 
-    settings = st.session_state.resource_settings[r]
+    s = st.session_state.resource_settings[r]
 
-    settings["capacity"] = col.number_input(
+    s["capacity"] = col.number_input(
         f"{r} Capacity",
         min_value=1,
-        value=int(settings["capacity"]),
+        value=int(s["capacity"]),
         key=f"cap_{r}"
     )
 
-    settings["cooldown"] = col.number_input(
+    s["cooldown"] = col.number_input(
         f"{r} Cooldown (weeks)",
         min_value=0.0,
-        value=float(settings["cooldown"]),
+        value=float(s["cooldown"]),
         step=0.5,
         key=f"cool_{r}"
     )
@@ -273,9 +271,6 @@ if st.button("Analyze"):
 
 if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
 
-    # -----------------------------
-    # Gantt Chart
-    # -----------------------------
     st.subheader("Combined Gantt")
 
     resource_order = (
@@ -298,8 +293,7 @@ if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
         x_start="Start date",
         x_end="End date",
         y="Resource",
-        color="Resource",
-        hover_data=["Title"]
+        color="Resource"
     )
 
     fig.update_yaxes(
@@ -310,11 +304,8 @@ if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
 
     st.plotly_chart(fig, width="stretch")
 
-    # -----------------------------
-    # Conflict-aware sorting
-    # -----------------------------
+    # Conflict sorting
     scores = {}
-
     for r in resources:
         df = expanded_tasks[expanded_tasks["Resource"] == r]
         cap = st.session_state.resource_settings[r]["capacity"]
@@ -322,22 +313,19 @@ if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
 
     sorted_resources = sorted(resources, key=lambda x: scores[x], reverse=True)
 
-    # -----------------------------
-    # Step Plots
-    # -----------------------------
     st.subheader("Step Plots (Conflict Prioritized)")
 
     x0 = expanded_tasks["Start date"].min()
     x1 = expanded_tasks["End date"].max()
 
     for r in sorted_resources:
-        settings = st.session_state.resource_settings[r]
+        s = st.session_state.resource_settings[r]
 
         fig = square_wave_step_plot(
             expanded_tasks,
             r,
-            settings["capacity"],
-            settings["cooldown"],
+            s["capacity"],
+            s["cooldown"],
             x0,
             x1
         )
