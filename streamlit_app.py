@@ -342,4 +342,3 @@ else:
 
 st.markdown("---")
 st.caption("Upload, edit, assign resources, and analyze conflicts.")
-``
