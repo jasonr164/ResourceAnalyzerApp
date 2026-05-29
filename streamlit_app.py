@@ -96,3 +96,105 @@ if uploaded_files:
         if np.issubdtype(fresh_tasks[col].dtype, np.number):
             fresh_tasks[col] = fresh_tasks[col].apply(excel_date)
         else:
+            fresh_tasks[col] = pd.to_datetime(fresh_tasks[col])
+    # Reset app state (only on new upload)
+    st.session_state.all_tasks = fresh_tasks
+    st.session_state.hide_tasks = set()
+    st.session_state.hide_resources = set()
+    st.session_state.resource_caps = {}
+    st.session_state.hide_step_plots = set()
+
+tasks = st.session_state.all_tasks.copy()
+
+# --- Task editor / Hide ---
+st.subheader("Tasks Loaded")
+if not tasks.empty:
+    hide_task_indices = st.session_state.hide_tasks
+    task_rows = []
+    for idx, row in tasks.iterrows():
+        col1, col2, col3, col4, col5 = st.columns([2,2,2,2,1])
+        col1.write(row['Title'])
+        col2.write(row['Start date'])
+        col3.write(row['End date'])
+        # Resource edit dropdown
+        resource_list = sorted(set(tasks['Resource'].unique()).union(tasks['Title'].unique()))
+        new_resource = col4.selectbox(
+            "", resource_list, index=resource_list.index(row['Resource']),
+            key=f"resource_select_{idx}"
+        )
+        tasks.at[idx, 'Resource'] = new_resource
+        st.session_state.all_tasks.at[idx, 'Resource'] = new_resource
+        hide = col5.checkbox("Hide", value=(idx in hide_task_indices), key=f"hide_{idx}")
+        if hide:
+            st.session_state.hide_tasks.add(idx)
+        else:
+            st.session_state.hide_tasks.discard(idx)
+    display_tasks = tasks[~tasks.index.isin(st.session_state.hide_tasks)]
+else:
+    display_tasks = tasks
+
+# Resource capacity controls with hide option
+st.subheader("Resource Capacity Settings")
+resource_caps = st.session_state.resource_caps
+edit_resources = sorted(display_tasks['Resource'].unique())
+for resource in edit_resources:
+    cap_col, hide_col = st.columns([3, 1])
+    if resource not in resource_caps:
+        resource_caps[resource] = 1
+    cap = cap_col.number_input(f"Capacity for {resource}", min_value=1, value=resource_caps[resource], key=f"cap_{resource}")
+    resource_caps[resource] = cap
+    hide_resource = hide_col.checkbox(f"Hide", value=(resource in st.session_state.hide_resources), key=f"hide_resource_{resource}")
+    if hide_resource:
+        st.session_state.hide_resources.add(resource)
+    else:
+        st.session_state.hide_resources.discard(resource)
+
+# Only show tasks for visible resources
+final_tasks = display_tasks[~display_tasks['Resource'].isin(st.session_state.hide_resources)]
+
+if st.button("Analyze"):
+    st.session_state.analyzed = True
+else:
+    st.session_state.analyzed = st.session_state.get("analyzed", False)
+
+if st.session_state.analyzed:
+    st.subheader("Combined Gantt Chart")
+    if not final_tasks.empty:
+        fig = px.timeline(
+            final_tasks,
+            x_start="Start date", x_end="End date", y="Resource", color="Title",
+            title="Combined Gantt Chart"
+        )
+        fig.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # X-axis range for all step plots
+        gantt_x0 = final_tasks['Start date'].min()
+        gantt_x1 = final_tasks['End date'].max()
+        st.subheader("Step Plot Visualizations")
+
+        # Step plots for each resource (hide is persistent)
+        for resource in sorted(final_tasks['Resource'].unique()):
+            hide_this_step = st.checkbox(
+                f"Hide Step Plot for {resource}",
+                value=(resource in st.session_state.hide_step_plots),
+                key=f"hide_step_{resource}"
+            )
+            if hide_this_step:
+                st.session_state.hide_step_plots.add(resource)
+            else:
+                st.session_state.hide_step_plots.discard(resource)
+            if resource not in st.session_state.hide_step_plots:
+                fig_step = square_wave_step_plot(final_tasks, resource, resource_caps[resource], gantt_x0, gantt_x1)
+                st.plotly_chart(fig_step, use_container_width=True)
+
+        st.subheader("Export Results")
+        st.write("Right-click on any plot to save as PNG.")
+    else:
+        st.info("No tasks/resources to display. All have been hidden or deleted.")
+
+else:
+    st.info("Upload at least one CSV or Excel file to begin and press Analyze.")
+
+st.markdown("---")
+st.caption("Upload files, flexibly assign resources, edit/hide/delete, analyze, and visualize resource conflicts.")
