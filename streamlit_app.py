@@ -58,39 +58,51 @@ if uploaded_files:
 
 tasks = st.session_state.all_tasks.copy()
 
-# Hide/Delete Task function
+# --- Task editor / Hide ---
 st.subheader("Tasks Loaded")
 if not tasks.empty:
-    delete_titles = []
-    edit_resources = []
-    task_editor_cols = st.columns([4, 3, 3, 3, 1])
-    task_editor_cols[0].write("Title")
-    task_editor_cols[1].write("Start date")
-    task_editor_cols[2].write("End date")
-    task_editor_cols[3].write("Resource")
-    #task_editor_cols[4].write("Hide?")
+    hide_task_indices = st.session_state.hide_tasks if "hide_tasks" in st.session_state else set()
+    task_rows = []
     for idx, row in tasks.iterrows():
-        key_r = f'resource_select_{idx}'
-        current_resource = st.session_state.all_tasks.loc[idx, 'Resource']
+        col1, col2, col3, col4, col5 = st.columns([2,2,2,2,1])
+        col1.write(row['Title'])
+        col2.write(row['Start date'])
+        col3.write(row['End date'])
+        # Resource edit dropdown
         resource_list = sorted(set(tasks['Resource'].unique()).union(tasks['Title'].unique()))
-        new_resource = task_editor_cols[3].selectbox(
-            "", resource_list, index=resource_list.index(current_resource),
-            key=key_r
+        new_resource = col4.selectbox(
+            "Resource", resource_list, index=resource_list.index(row['Resource']),
+            key=f"resource_select_{idx}"
         )
         tasks.at[idx, 'Resource'] = new_resource
         st.session_state.all_tasks.at[idx, 'Resource'] = new_resource
-
-        if task_editor_cols[4].checkbox("", value=False, key=f"hide_{idx}"):
+        hide = col5.checkbox("Hide", value=(idx in hide_task_indices), key=f"hide_{idx}")
+        if hide:
             st.session_state.hide_tasks.add(idx)
         else:
-            if idx in st.session_state.hide_tasks:
-                st.session_state.hide_tasks.remove(idx)
-
-    # Apply "hide" to tasks
+            st.session_state.hide_tasks.discard(idx)
     display_tasks = tasks[~tasks.index.isin(st.session_state.hide_tasks)]
 else:
     display_tasks = tasks
 
+# Persistent Step Plot Hide
+if "hide_step_plots" not in st.session_state:
+    st.session_state.hide_step_plots = set()
+
+for resource in sorted(final_tasks['Resource'].unique()):
+    hide_this_step = st.checkbox(
+        f"Hide Step Plot for {resource}",
+        value=(resource in st.session_state.hide_step_plots),
+        key=f"hide_step_{resource}"
+    )
+    if hide_this_step:
+        st.session_state.hide_step_plots.add(resource)
+    else:
+        st.session_state.hide_step_plots.discard(resource)
+    if resource not in st.session_state.hide_step_plots:
+        # (Plotting code for this step plot)
+
+"""
 # Resource capacity controls with delete/hide option
 st.subheader("Resource Capacity Settings")
 resource_caps = st.session_state.resource_caps
@@ -106,6 +118,7 @@ for resource in edit_resources:
     else:
         if resource in st.session_state.hide_resources:
             st.session_state.hide_resources.remove(resource)
+"""
 
 # Only show tasks for visible resources
 final_tasks = display_tasks[~display_tasks['Resource'].isin(st.session_state.hide_resources)]
