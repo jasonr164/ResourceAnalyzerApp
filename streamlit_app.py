@@ -68,7 +68,7 @@ if not tasks.empty:
     task_editor_cols[1].write("Start date")
     task_editor_cols[2].write("End date")
     task_editor_cols[3].write("Resource")
-    task_editor_cols[4].write("Hide?")
+    #task_editor_cols[4].write("Hide?")
     for idx, row in tasks.iterrows():
         key_r = f'resource_select_{idx}'
         current_resource = st.session_state.all_tasks.loc[idx, 'Resource']
