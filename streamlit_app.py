@@ -84,6 +84,7 @@ def square_wave_step_plot(all_tasks, resource, capacity, cooldown_weeks, x_min, 
 
     fig = go.Figure()
 
+    # Base usage
     fig.add_trace(go.Scatter(
         x=step_df["time"],
         y=step_df["usage"],
@@ -92,7 +93,7 @@ def square_wave_step_plot(all_tasks, resource, capacity, cooldown_weeks, x_min, 
         name="Usage"
     ))
 
-    # conflicts
+    # Conflict highlighting
     mask = step_df["usage"] > capacity
 
     fig.add_trace(go.Scatter(
@@ -121,7 +122,7 @@ def square_wave_step_plot(all_tasks, resource, capacity, cooldown_weeks, x_min, 
     return fig
 
 # -----------------------------
-# Conflict scoring (for sorting)
+# Conflict scoring (sorting)
 # -----------------------------
 def compute_conflict_score(df, capacity):
     events = []
@@ -157,7 +158,7 @@ if "resource_settings" not in st.session_state:
 # -----------------------------
 # App UI
 # -----------------------------
-st.title("Resource Gantt Tool - Version C")
+st.title("Resource Gantt Tool - Version C1")
 
 uploaded_files = st.file_uploader(
     "Upload files",
@@ -206,10 +207,18 @@ if not tasks.empty:
         key="editor"
     )
 
-    if st.button("Apply Changes"):
-        st.session_state.all_tasks = edited.drop(columns=["Hide"])
-        st.session_state.hide_tasks = set(edited[edited["Hide"]].index)
-        st.session_state.edit_buffer = edited.copy()
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("✅ Apply Changes"):
+            st.session_state.all_tasks = edited.drop(columns=["Hide"])
+            st.session_state.hide_tasks = set(edited[edited["Hide"]].index)
+            st.session_state.edit_buffer = edited.copy()
+
+    with col2:
+        if st.button("↩ Reset Edits"):
+            st.session_state.edit_buffer = tasks.copy()
+            st.session_state.edit_buffer["Hide"] = False
 
     display_tasks = edited[~edited["Hide"]]
 
@@ -236,17 +245,24 @@ for i, r in enumerate(resources):
     if r not in st.session_state.resource_settings:
         st.session_state.resource_settings[r] = {
             "capacity": 1,
-            "cooldown": 1
+            "cooldown": 1.0
         }
 
     settings = st.session_state.resource_settings[r]
 
     settings["capacity"] = col.number_input(
-        f"{r} Capacity", 1, value=settings["capacity"], key=f"cap_{r}"
+        f"{r} Capacity",
+        min_value=1,
+        value=int(settings["capacity"]),
+        key=f"cap_{r}"
     )
 
     settings["cooldown"] = col.number_input(
-        f"{r} Cooldown (weeks)", 0.0, value=settings["cooldown"], step=0.5, key=f"cool_{r}"
+        f"{r} Cooldown (weeks)",
+        min_value=0.0,
+        value=float(settings["cooldown"]),
+        step=0.5,
+        key=f"cool_{r}"
     )
 
 # -----------------------------
@@ -258,7 +274,7 @@ if st.button("Analyze"):
 if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
 
     # -----------------------------
-    # Gantt
+    # Gantt Chart
     # -----------------------------
     st.subheader("Combined Gantt")
 
@@ -286,11 +302,13 @@ if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
         hover_data=["Title"]
     )
 
-    fig.update_yaxes(categoryorder="array",
-                     categoryarray=resource_order,
-                     autorange="reversed")
+    fig.update_yaxes(
+        categoryorder="array",
+        categoryarray=resource_order,
+        autorange="reversed"
+    )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # -----------------------------
     # Conflict-aware sorting
@@ -324,4 +342,4 @@ if st.session_state.get("analyzed", False) and not expanded_tasks.empty:
             x1
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
