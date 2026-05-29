@@ -4,14 +4,13 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- Helper Functions ---
-
 def parse_gantt_file(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
-    required_cols = ['Title', 'Start Date', 'End date']
+    # Ensure columns match your file exactly
+    required_cols = ['Title', 'Start date', 'End date']
     if not all(col in df.columns for col in required_cols):
         st.error(f"File {uploaded_file.name} missing columns: {required_cols}")
         return pd.DataFrame(columns=required_cols)
@@ -20,7 +19,7 @@ def parse_gantt_file(uploaded_file):
 def combined_gantt_chart(all_tasks):
     fig = px.timeline(
         all_tasks,
-        x_start="Start Date", x_end="End date", y="Resource", color="Title",
+        x_start="Start date", x_end="End date", y="Resource", color="Title",
         title="Combined Gantt Chart"
     )
     fig.update_yaxes(autorange="reversed")
@@ -30,7 +29,7 @@ def compute_step_plot(all_tasks, resource, capacity):
     df = all_tasks[all_tasks['Resource'] == resource]
     timeline = []
     for _, row in df.iterrows():
-        timeline.append({'time': row['Start Date'], 'change': 1, 'task': row['Title']})
+        timeline.append({'time': row['Start date'], 'change': 1, 'task': row['Title']})
         timeline.append({'time': row['End date'], 'change': -1, 'task': row['Title']})
     timeline = pd.DataFrame(timeline).sort_values(by='time')
     timeline['usage'] = timeline['change'].cumsum()
@@ -52,8 +51,6 @@ def compute_step_plot(all_tasks, resource, capacity):
                      xaxis_title="Time", yaxis_title="Usage")
     return fig
 
-# --- Streamlit App ---
-
 st.title("Resource Gantt Comparison Tool")
 
 uploaded_files = st.file_uploader(
@@ -61,22 +58,27 @@ uploaded_files = st.file_uploader(
     type=['csv', 'xls', 'xlsx'], accept_multiple_files=True
 )
 
-all_tasks = pd.DataFrame(columns=['Title', 'Start Date', 'End date', 'Resource'])
+all_tasks = pd.DataFrame(columns=['Title', 'Start date', 'End date', 'Resource'])
 
 if uploaded_files:
     for file in uploaded_files:
         df = parse_gantt_file(file)
-        # Assign resource as Title
+        # Assign Resource as Title
         df['Resource'] = df['Title']
         all_tasks = pd.concat([all_tasks, df], ignore_index=True)
 
-    # Fix date formats
-    all_tasks['Start Date'] = pd.to_datetime(all_tasks['Start Date'])
-    all_tasks['End date'] = pd.to_datetime(all_tasks['End date'])
+    # Convert start/end dates from Excel numeric to datetime if needed
+    # Handles integer/float Excel serial numbers
+    def excel_date(num):
+        return pd.Timestamp('1899-12-30') + pd.to_timedelta(num, unit='D')
+    for col in ['Start date', 'End date']:
+        if np.issubdtype(all_tasks[col].dtype, np.number):
+            all_tasks[col] = all_tasks[col].apply(excel_date)
+        else:
+            all_tasks[col] = pd.to_datetime(all_tasks[col])
 
-    # Assignment editor (simplified)
     st.subheader("Tasks Loaded")
-    st.dataframe(all_tasks[['Title', 'Start Date', 'End date', 'Resource']])
+    st.dataframe(all_tasks[['Title', 'Start date', 'End date', 'Resource']])
 
     st.subheader("Resource Capacity Settings")
     resource_caps = {}
